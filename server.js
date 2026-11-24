@@ -98,7 +98,7 @@ INSERT INTO productos (nombre, descripcion, precio) VALUES
 INSERT INTO cupones (codigo, porcentaje) VALUES
  ('BIENVENIDA10',10),('ARTESANAL15',15),('JABONLOVER20',20);
 `;
-const db = new Database(path.join(__dirname, 'jabon'));
+const db = new Database(process.env.VERCEL ? '/tmp/jabon' : path.join(__dirname, 'jabon'));
 db.pragma('foreign_keys = ON');
 if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name='usuarios'").get()) db.exec(SCHEMA);
 db.exec(`CREATE TABLE IF NOT EXISTS sesiones(token TEXT PRIMARY KEY, usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, csrf TEXT NOT NULL, expira INTEGER NOT NULL)`);
@@ -233,4 +233,5 @@ app.get('/api/admin/:k', need, adminOnly, (req, res) => Object.hasOwn(ADMIN_Q, r
 app.use(express.static(path.join(__dirname, 'public')));          // solo /public; el .db y el código quedan fuera
 app.use('/api', (_req, res) => res.status(404).json({ error: 'No encontrado' }));
 app.use((err, _req, res, _next) => { console.error(err); res.status(err.status === 400 ? 400 : 500).json({ error: 'Error del servidor' }); });
-app.listen(process.env.PORT || 3000, process.env.HOST || '127.0.0.1', () => console.log('http://' + (process.env.HOST || '127.0.0.1') + ':' + (process.env.PORT || 3000)));
+if (require.main === module) app.listen(process.env.PORT || 3000, process.env.HOST || '127.0.0.1', () => console.log('http://' + (process.env.HOST || '127.0.0.1') + ':' + (process.env.PORT || 3000)));
+module.exports = app;
