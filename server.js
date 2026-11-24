@@ -113,6 +113,8 @@ const one = async (sql, args, c) => (await q(sql, args, c))[0];
 const ready = (async () => {
   if (process.env.VERCEL && !process.env.TURSO_DATABASE_URL) throw new Error('Falta TURSO_DATABASE_URL (y TURSO_AUTH_TOKEN) en las variables de Vercel');
   if (!(await one("SELECT 1 x FROM sqlite_master WHERE name='usuarios'"))) await db.executeMultiple(SCHEMA);
+  // una participación por usuario, a nivel de base de datos (además del correo único)
+  await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_rifa_usuario ON participantes_rifa(usuario_id)').catch(e => console.warn('Índice de rifa no creado:', e.message));
   const ap = process.env.ADMIN_PASSWORD;
   if (ap) {   // crea al admin o actualiza su contraseña con la del entorno
     const a = await one("SELECT contrasena_hash h FROM usuarios WHERE nombre='admin'");
@@ -172,8 +174,8 @@ const Checkout = z.object({
   items: z.array(z.object({ id: z.number().int().positive(), qty: z.number().int().min(1).max(20) })).min(1).max(30),
   coupon: z.string().trim().max(30).nullable().optional(),
   status: z.enum(['pagada', 'pendiente']),
-  card4: z.string().regex(/^\d{0,4}$/).optional()           // el cliente solo manda los últimos 4
-});
+  card4: z.string().regex(/^\d{4}$/).optional()             // el cliente solo manda los últimos 4
+}).refine(d => d.status !== 'pagada' || !!d.card4, { message: 'Datos de tarjeta inválidos' });
 const Raffle = z.object({ name: z.string().trim().min(2).max(60), email: Email });
 const Review = z.object({ stars: z.number().int().min(1).max(5), comment: z.string().trim().min(1, 'Escribe un comentario').max(500) });
 const isDup = e => /UNIQUE|constraint/i.test(String(e && e.message));
@@ -230,10 +232,13 @@ app.post('/api/checkout', need, csrf, writeLimit, ah(async (req, res) => {
   } catch (e) { await tx.rollback().catch(() => {}); throw e; } finally { tx.close(); }
   res.json({ order: { id, status, total } });
 }));
+app.get('/api/raffle/mine', need, ah(async (req, res) => res.json({ joined: !!(await one('SELECT 1 x FROM participantes_rifa WHERE usuario_id=?', [req.s.id])) })));
 app.post('/api/raffle', need, csrf, writeLimit, ah(async (req, res) => {
   const p = Raffle.safeParse(req.body); if (!p.success) return bad(res, p);
+  const ya = await one('SELECT 1 x FROM participantes_rifa WHERE usuario_id=? OR correo=?', [req.s.id, p.data.email]);
+  if (ya) return res.status(409).json({ error: 'Ya estás registrado en la rifa. Solo se permite una participación.' });
   try { await q('INSERT INTO participantes_rifa(usuario_id,nombre,correo) VALUES(?,?,?)', [req.s.id, p.data.name, p.data.email]); res.json({ ok: true }); }
-  catch (e) { if (isDup(e)) return res.status(409).json({ error: 'Ese correo ya está registrado en la rifa.' }); throw e; }
+  catch (e) { if (isDup(e)) return res.status(409).json({ error: 'Ya estás registrado en la rifa. Solo se permite una participación.' }); throw e; }
 }));
 app.get('/api/reviews', need, ah(async (_req, res) => res.json(await q('SELECT u.nombre AS name,r.estrellas AS stars,r.comentario AS comment,r.creado_en AS created_at FROM resenas r JOIN usuarios u ON u.id=r.usuario_id ORDER BY r.id DESC LIMIT 100'))));
 app.post('/api/reviews', need, csrf, writeLimit, ah(async (req, res) => {

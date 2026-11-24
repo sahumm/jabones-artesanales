@@ -37,7 +37,7 @@ function enter() {
   $('#login').hidden = true; $('#app').hidden = false;
   $('#adminBtn').hidden = !user.is_admin;
   $('#rName').value = user.name; $('#rMail').value = user.email;
-  renderCart(); loadReviews();
+  renderCart(); loadReviews(); checkRaffle();
 }
 
 // ===== CARRITO =====
@@ -74,8 +74,9 @@ $('#cartItems').onclick = e => {
 // ===== PAGO SIMULADO (al servidor solo van los últimos 4 dígitos) =====
 async function checkout(status) {
   if (!cart.length) { $('#payMsg').textContent = 'Agrega productos al carrito primero.'; return; }
+  if (status === 'pagada') { const err = validarTarjeta(); if (err) { $('#payMsg').textContent = err; return; } }
   try {
-    const card4 = $('#cNum').value.replace(/\D/g, '').slice(-4);
+    const card4 = status === 'pagada' ? $('#cNum').value.replace(/\D/g, '').slice(-4) : undefined;   // solo los últimos 4 viajan al servidor
     const d = await api('checkout', 'POST', { items: cart.map(i => ({ id: +i.id, qty: i.qty })), coupon: coupon ? coupon.code : null, status, card4 });
     cart = []; coupon = null; $('#couponMsg').textContent = ''; saveCart();
     ['cName', 'cNum', 'cExp', 'cCvv'].forEach(i => $('#' + i).value = '');
@@ -98,9 +99,11 @@ $('#couponForm').addEventListener('submit', async e => {
 // ===== RIFA =====
 $('#raffleForm').addEventListener('submit', async e => {
   e.preventDefault();
-  try { await api('raffle', 'POST', { name: $('#rName').value, email: $('#rMail').value }); $('#raffleMsg').textContent = '¡Listo! Ya estás participando. Mucha suerte.'; }
-  catch (err) { $('#raffleMsg').textContent = err.message; }
+  try { await api('raffle', 'POST', { name: $('#rName').value, email: $('#rMail').value }); lockRaffle('¡Listo! Ya estás participando. Mucha suerte.'); }
+  catch (err) { /^Ya est/.test(err.message) ? lockRaffle(err.message) : $('#raffleMsg').textContent = err.message; }
 });
+function lockRaffle(msg) { $('#raffleForm').querySelectorAll('input,button').forEach(el => el.disabled = true); $('#raffleMsg').textContent = msg; }
+async function checkRaffle() { try { if ((await api('raffle/mine')).joined) lockRaffle('Ya estás registrado en la rifa. ¡Mucha suerte!'); } catch {} }
 
 // ===== OPINIONES =====
 const starsEl = $('#stars');
@@ -149,3 +152,22 @@ $('#adminBtn').onclick = () => { step = 0; renderAdmin(); $('#admin').hidden = f
 $('#admClose').onclick = () => $('#admin').hidden = true;
 $('#admPrev').onclick = () => { step--; renderAdmin(); };
 $('#admNext').onclick = () => { step++; renderAdmin(); };
+
+// ===== VALIDACIÓN DE FORMULARIOS =====
+// Tarjeta: solo formato. Los datos completos NUNCA se envían al servidor (solo los últimos 4 dígitos).
+const mask = (el, fn, max) => { el.maxLength = max; el.inputMode = el.id === 'cName' ? 'text' : 'numeric'; el.addEventListener('input', () => { el.value = fn(el.value); }); };
+mask($('#cName'), v => { v = v.replace(/[^\p{L} ]/gu, '').replace(/^ +/, '').replace(/ {2,}/g, ' '); const w = v.split(' '); return w.length > 2 ? w.slice(0, 2).join(' ') : v; }, 40);   // máx. 2 palabras
+mask($('#cNum'), v => v.replace(/\D/g, '').slice(0, 16).replace(/(.{4})/g, '$1 ').trim(), 19);                                                 // 16 dígitos
+mask($('#cExp'), v => { const d = v.replace(/\D/g, '').slice(0, 4); return d.length > 2 ? d.slice(0, 2) + '/' + d.slice(2) : d; }, 5);       // MM/AA = 4 dígitos
+mask($('#cCvv'), v => v.replace(/\D/g, '').slice(0, 3), 3);                                                                                    // CVV = 3 dígitos
+function validarTarjeta() {
+  const nombre = $('#cName').value.trim(), num = $('#cNum').value.replace(/\D/g, ''), exp = $('#cExp').value, cvv = $('#cCvv').value, mes = +exp.slice(0, 2);
+  if (!/^\p{L}+( \p{L}+)?$/u.test(nombre)) return 'Nombre: una o dos palabras, solo letras.';
+  if (num.length !== 16) return 'El número de tarjeta debe tener 16 dígitos.';
+  if (!/^\d{2}\/\d{2}$/.test(exp) || mes < 1 || mes > 12) return 'Fecha inválida: usa MM/AA (4 dígitos, mes 01 a 12).';
+  if (!/^\d{3}$/.test(cvv)) return 'El CVV debe tener 3 dígitos.';
+  return '';
+}
+// Límites de longitud en los demás campos (el servidor los vuelve a validar)
+$('#loginForm').elements.name.maxLength = 30; $('#loginForm').elements.mail.maxLength = 100;
+$('#rName').maxLength = 60; $('#rMail').maxLength = 100; $('#rvText').maxLength = 500; $('#couponIn').maxLength = 30;
