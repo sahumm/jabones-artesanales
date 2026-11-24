@@ -1,0 +1,15 @@
+
+node_modules/
+
+jabon
+
+jabon-journal
+
+*.db
+
+*.db-*
+
+.env
+
+server (1).js
+

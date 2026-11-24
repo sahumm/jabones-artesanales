@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jabones naturales</title>
+<meta property="og:title" content="Jabones naturales">
+<meta property="og:description" content="Jabones artesanales hechos a mano con ingredientes naturales.">
+<!-- <link rel="icon" href="favicon.png"> -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&family=Fraunces:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- LOGIN -->
+<main id="login" class="login">
+  <form id="loginForm" class="login__box">
+    <h1>Jabones naturales</h1>
+    <p>Entra o crea tu cuenta para comprar.</p>
+    <label>Nombre de usuario<input name="name" required autocomplete="username"></label>
+    <label>Correo<input name="mail" type="email" required autocomplete="email"></label>
+    <label>Contraseña<input name="pass" type="password" required minlength="8" maxlength="72" autocomplete="current-password"></label>
+    <p id="loginErr" class="err" role="alert"></p>
+    <button class="btn" type="submit">Entrar</button>
+  </form>
+</main>
+
+<div id="app" hidden>
+  <header class="top">
+    <h1>Jabones naturales</h1>
+    <nav class="nav">
+      <a href="#productos">Productos</a><a href="#cupon">Cupón</a><a href="#rifa">Rifa</a>
+      <a href="#qa">Preguntas</a><a href="#opiniones">Opiniones</a>
+      <button id="adminBtn" class="link" hidden>Admin</button>
+      <button id="logout" class="link">Salir</button>
+      <button id="cartBtn" class="btn btn--sm">Carrito <span id="cartCount">0</span></button>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero"><h2>Hechos a mano, a fuego lento</h2><p>Jabones en frío con aceites vegetales, arcillas y esencias naturales.</p></section>
+
+    <section id="productos" class="wrap">
+      <h2>Nuestros jabones</h2>
+      <!-- Pon tu imagen en el src de cada <img> -->
+      <div class="grid">
+      <article class="card" data-id="1" data-name="Lavanda y Avena" data-price="65">
+        <img src="" alt="Jabón de Lavanda y Avena">
+        <h3>Lavanda y Avena</h3><p>Calmante, para piel sensible</p>
+        <div class="card__row"><span class="price">$65 MXN</span><button class="add" aria-label="Agregar Lavanda y Avena al carrito">+</button></div>
+      </article>
+      <article class="card" data-id="2" data-name="Miel y Cúrcuma" data-price="70">
+        <img src="" alt="Jabón de Miel y Cúrcuma">
+        <h3>Miel y Cúrcuma</h3><p>Luminosidad y suavidad</p>
+        <div class="card__row"><span class="price">$70 MXN</span><button class="add" aria-label="Agregar Miel y Cúrcuma al carrito">+</button></div>
+      </article>
+      <article class="card" data-id="3" data-name="Carbón Activado" data-price="75">
+        <img src="" alt="Jabón de Carbón Activado">
+        <h3>Carbón Activado</h3><p>Limpieza profunda de poros</p>
+        <div class="card__row"><span class="price">$75 MXN</span><button class="add" aria-label="Agregar Carbón Activado al carrito">+</button></div>
+      </article>
+      <article class="card" data-id="4" data-name="Romero y Menta" data-price="65">
+        <img src="" alt="Jabón de Romero y Menta">
+        <h3>Romero y Menta</h3><p>Fresco y tonificante</p>
+        <div class="card__row"><span class="price">$65 MXN</span><button class="add" aria-label="Agregar Romero y Menta al carrito">+</button></div>
+      </article>
+      <article class="card" data-id="5" data-name="Rosa Mosqueta" data-price="85">
+        <img src="" alt="Jabón de Rosa Mosqueta">
+        <h3>Rosa Mosqueta</h3><p>Hidratación y firmeza</p>
+        <div class="card__row"><span class="price">$85 MXN</span><button class="add" aria-label="Agregar Rosa Mosqueta al carrito">+</button></div>
+      </article>
+      <article class="card" data-id="6" data-name="Café y Canela" data-price="70">
+        <img src="" alt="Jabón de Café y Canela">
+        <h3>Café y Canela</h3><p>Exfoliante suave, aroma cálido</p>
+        <div class="card__row"><span class="price">$70 MXN</span><button class="add" aria-label="Agregar Café y Canela al carrito">+</button></div>
+      </article>
+      <article class="card" data-id="7" data-name="Aloe Vera y Pepino" data-price="65">
+        <img src="" alt="Jabón de Aloe Vera y Pepino">
+        <h3>Aloe Vera y Pepino</h3><p>Frescura para piel mixta</p>
+        <div class="card__row"><span class="price">$65 MXN</span><button class="add" aria-label="Agregar Aloe Vera y Pepino al carrito">+</button></div>
+      </article>
+      <article class="card" data-id="8" data-name="Leche de Cabra" data-price="90">
+        <img src="" alt="Jabón de Leche de Cabra">
+        <h3>Leche de Cabra</h3><p>Cremoso, ultra nutritivo</p>
+        <div class="card__row"><span class="price">$90 MXN</span><button class="add" aria-label="Agregar Leche de Cabra al carrito">+</button></div>
+      </article>
+      <article class="card" data-id="9" data-name="Naranja y Clavo" data-price="70">
+        <img src="" alt="Jabón de Naranja y Clavo">
+        <h3>Naranja y Clavo</h3><p>Cítrico y energizante</p>
+        <div class="card__row"><span class="price">$70 MXN</span><button class="add" aria-label="Agregar Naranja y Clavo al carrito">+</button></div>
+      </article>
+      <article class="card" data-id="10" data-name="Arcilla Verde" data-price="75">
+        <img src="" alt="Jabón de Arcilla Verde">
+        <h3>Arcilla Verde</h3><p>Equilibra la piel grasa</p>
+        <div class="card__row"><span class="price">$75 MXN</span><button class="add" aria-label="Agregar Arcilla Verde al carrito">+</button></div>
+      </article>
+      <article class="card" data-id="11" data-name="Manzanilla y Caléndula" data-price="70">
+        <img src="" alt="Jabón de Manzanilla y Caléndula">
+        <h3>Manzanilla y Caléndula</h3><p>Suave, ideal para bebés</p>
+        <div class="card__row"><span class="price">$70 MXN</span><button class="add" aria-label="Agregar Manzanilla y Caléndula al carrito">+</button></div>
+      </article>
+      <article class="card" data-id="12" data-name="Coco y Vainilla" data-price="80">
+        <img src="" alt="Jabón de Coco y Vainilla">
+        <h3>Coco y Vainilla</h3><p>Dulce y humectante</p>
+        <div class="card__row"><span class="price">$80 MXN</span><button class="add" aria-label="Agregar Coco y Vainilla al carrito">+</button></div>
+      </article>
+      </div>
+    </section>
+
+    <section id="cupon" class="wrap band">
+      <h2>¿Tienes un cupón?</h2>
+      <form id="couponForm" class="inline"><input id="couponIn" placeholder="Escribe tu código" required><button class="btn">Aplicar</button></form>
+      <p id="couponMsg" class="muted"></p>
+    </section>
+
+    <section id="rifa" class="wrap">
+      <h2>Rifa: Pack Premium gratis</h2>
+      <p class="muted">Participa para ganar un pack con 6 de nuestros jabones favoritos. Una participación por correo.</p>
+      <form id="raffleForm" class="inline">
+        <input id="rName" placeholder="Nombre completo" required><input id="rMail" type="email" placeholder="Correo" required><button class="btn">Participar</button>
+      </form>
+      <p id="raffleMsg" class="muted"></p>
+    </section>
+
+    <section id="qa" class="wrap">
+      <h2>Preguntas frecuentes</h2>
+      <details><summary>¿De qué están hechos los jabones?</summary><p>De aceites vegetales (oliva, coco, almendra), mantecas, arcillas, hierbas y esencias naturales. Sin parabenos ni colorantes artificiales.</p></details>
+      <details><summary>¿Sirven para piel sensible?</summary><p>Sí. La lavanda con avena y la manzanilla con caléndula son las más suaves.</p></details>
+      <details><summary>¿Cuánto dura un jabón?</summary><p>Entre 4 y 6 semanas con uso diario, si lo dejas secar entre usos.</p></details>
+      <details><summary>¿Cuánto tarda el envío?</summary><p>De 3 a 6 días hábiles a todo México.</p></details>
+      <details><summary>¿Puedo hacer pedidos al mayoreo?</summary><p>Sí, escríbenos por correo y te cotizamos.</p></details>
+    </section>
+
+    <section id="opiniones" class="wrap">
+      <h2>Opiniones</h2>
+      <p id="avg" class="muted"></p>
+      <form id="reviewForm" class="review">
+        <div id="stars" class="stars" role="radiogroup" aria-label="Calificación"></div>
+        <textarea id="rvText" rows="3" placeholder="Cuéntanos tu experiencia" required></textarea>
+        <button class="btn">Publicar opinión</button>
+      </form>
+      <div id="reviews"></div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p><strong>Jabones naturales</strong> · Hecho a mano en México</p>
+    <p>hola@jabonesnaturales.mx · Instagram @jabonesnaturales</p>
+    <p class="muted">© 2026 Jabones naturales. Todos los derechos reservados.</p>
+  </footer>
+
+  <!-- CARRITO -->
+  <aside id="cart" class="drawer" aria-label="Carrito">
+    <div class="drawer__head"><h2>Tu carrito</h2><button id="cartClose" class="link" aria-label="Cerrar">✕</button></div>
+    <div id="cartItems"></div>
+    <div id="cartTotals" class="totals"></div>
+    <div class="pay">
+      <h3>Datos de tarjeta (simulación)</h3>
+      <input id="cName" placeholder="Nombre en la tarjeta">
+      <input id="cNum" placeholder="Número de tarjeta" inputmode="numeric">
+      <div class="inline"><input id="cExp" placeholder="MM/AA"><input id="cCvv" placeholder="CVV"></div>
+      <button id="payBtn" class="btn">Pagar</button>
+      <button id="pendBtn" class="btn btn--ghost">Dejar pendiente</button>
+      <p id="payMsg" class="muted"></p>
+    </div>
+  </aside>
+
+  <!-- ADMIN -->
+  <div id="admin" class="modal" hidden>
+    <div class="modal__box">
+      <div class="drawer__head"><h2 id="admTitle"></h2><button id="admClose" class="link" aria-label="Cerrar">✕</button></div>
+      <div id="admBody" class="table-wrap"></div>
+      <div class="adm-nav"><button id="admPrev" class="btn btn--sm btn--ghost">‹</button><span id="admStep" class="muted"></span><button id="admNext" class="btn btn--sm">›</button></div>
+    </div>
+  </div>
+  <div id="toast" class="toast" role="status"></div>
+</div>
+<script src="script.js"></script>
+</body>
+</html>
