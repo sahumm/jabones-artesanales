@@ -1,15 +1,15 @@
 'use strict';
 const express = require('express'), helmet = require('helmet'), rateLimit = require('express-rate-limit');
-const bcrypt = require('bcryptjs'), crypto = require('crypto'), Database = require('better-sqlite3');
-const { z } = require('zod'), fs = require('fs'), path = require('path');
+const bcrypt = require('bcryptjs'), crypto = require('crypto'), { createClient } = require('@libsql/client');
+const { z } = require('zod'), path = require('path');
 
 const PROD = process.env.NODE_ENV === 'production', TTL = 2 * 60 * 60 * 1000;
-// Esquema incluido aquí: ya no hace falta schema.sql para que el servidor arranque
+
+// Esquema incluido aquí (idempotente: se puede correr las veces que sea)
 const SCHEMA = `
 -- Base de datos "jabon" · esquema SQLite (tablas y columnas en español)
-PRAGMA foreign_keys = ON;
 
-CREATE TABLE usuarios (
+CREATE TABLE IF NOT EXISTS usuarios (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   nombre          TEXT NOT NULL UNIQUE COLLATE NOCASE,
   correo          TEXT NOT NULL COLLATE NOCASE,
@@ -18,7 +18,7 @@ CREATE TABLE usuarios (
   creado_en       TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE productos (
+CREATE TABLE IF NOT EXISTS productos (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   nombre      TEXT NOT NULL UNIQUE,
   descripcion TEXT,
@@ -27,13 +27,13 @@ CREATE TABLE productos (
   activo      INTEGER NOT NULL DEFAULT 1
 );
 
-CREATE TABLE cupones (
+CREATE TABLE IF NOT EXISTS cupones (
   codigo     TEXT PRIMARY KEY COLLATE NOCASE,
   porcentaje INTEGER NOT NULL CHECK (porcentaje BETWEEN 1 AND 100),
   activo     INTEGER NOT NULL DEFAULT 1
 );
 
-CREATE TABLE pedidos (
+CREATE TABLE IF NOT EXISTS pedidos (
   id               INTEGER PRIMARY KEY AUTOINCREMENT,
   usuario_id       INTEGER NOT NULL REFERENCES usuarios(id),
   estado           TEXT NOT NULL CHECK (estado IN ('pagada','pendiente')),
@@ -45,7 +45,7 @@ CREATE TABLE pedidos (
   creado_en        TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE pedido_detalle (
+CREATE TABLE IF NOT EXISTS pedido_detalle (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   pedido_id       INTEGER NOT NULL REFERENCES pedidos(id) ON DELETE CASCADE,
   producto_id     INTEGER NOT NULL REFERENCES productos(id),
@@ -53,7 +53,7 @@ CREATE TABLE pedido_detalle (
   precio_unitario REAL NOT NULL              -- precio al momento de la compra
 );
 
-CREATE TABLE participantes_rifa (
+CREATE TABLE IF NOT EXISTS participantes_rifa (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   usuario_id INTEGER REFERENCES usuarios(id),
   nombre     TEXT NOT NULL,
@@ -61,7 +61,7 @@ CREATE TABLE participantes_rifa (
   creado_en  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE resenas (
+CREATE TABLE IF NOT EXISTS resenas (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   usuario_id INTEGER NOT NULL REFERENCES usuarios(id),
   estrellas  INTEGER NOT NULL CHECK (estrellas BETWEEN 1 AND 5),
@@ -69,19 +69,19 @@ CREATE TABLE resenas (
   creado_en  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE sesiones (
+CREATE TABLE IF NOT EXISTS sesiones (
   token      TEXT PRIMARY KEY,               -- guardado como hash SHA-256
   usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
   csrf       TEXT NOT NULL,
   expira     INTEGER NOT NULL
 );
 
-CREATE INDEX idx_pedidos_estado  ON pedidos(estado);
-CREATE INDEX idx_pedidos_usuario ON pedidos(usuario_id);
-CREATE INDEX idx_detalle_pedido  ON pedido_detalle(pedido_id);
+CREATE INDEX IF NOT EXISTS idx_pedidos_estado  ON pedidos(estado);
+CREATE INDEX IF NOT EXISTS idx_pedidos_usuario ON pedidos(usuario_id);
+CREATE INDEX IF NOT EXISTS idx_detalle_pedido  ON pedido_detalle(pedido_id);
 
 -- ===== DATOS INICIALES =====
-INSERT INTO productos (nombre, descripcion, precio) VALUES
+INSERT OR IGNORE INTO productos (nombre, descripcion, precio) VALUES
  ('Lavanda y Avena','Calmante, para piel sensible',65),
  ('Miel y Cúrcuma','Luminosidad y suavidad',70),
  ('Carbón Activado','Limpieza profunda de poros',75),
@@ -95,20 +95,33 @@ INSERT INTO productos (nombre, descripcion, precio) VALUES
  ('Manzanilla y Caléndula','Suave, ideal para bebés',70),
  ('Coco y Vainilla','Dulce y humectante',80);
 
-INSERT INTO cupones (codigo, porcentaje) VALUES
+INSERT OR IGNORE INTO cupones (codigo, porcentaje) VALUES
  ('BIENVENIDA10',10),('ARTESANAL15',15),('JABONLOVER20',20);
 `;
-const db = new Database(process.env.VERCEL ? '/tmp/jabon' : path.join(__dirname, 'jabon'));
-db.pragma('foreign_keys = ON');
-if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name='usuarios'").get()) db.exec(SCHEMA);
-db.exec(`CREATE TABLE IF NOT EXISTS sesiones(token TEXT PRIMARY KEY, usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE, csrf TEXT NOT NULL, expira INTEGER NOT NULL)`);
 
-// Admin: la contraseña viene del entorno, NUNCA del código
-if (process.env.ADMIN_PASSWORD) {
-  // crea al admin o, si ya existe, le actualiza la contraseña con la del entorno
-  db.prepare("INSERT INTO usuarios(nombre,correo,contrasena_hash,es_admin) VALUES('admin','admin@local',?,1) ON CONFLICT(nombre) DO UPDATE SET contrasena_hash=excluded.contrasena_hash, es_admin=1").run(bcrypt.hashSync(process.env.ADMIN_PASSWORD, 12));
-  console.log('Admin listo → usuario: admin');
-} else if (!db.prepare('SELECT 1 FROM usuarios WHERE es_admin=1').get()) console.warn('⚠ No hay admin. Arranca con ADMIN_PASSWORD="..." node server.js');
+// Base de datos: en la nube (Turso) si hay variables, o el archivo local "jabon"
+const db = createClient({
+  url: process.env.TURSO_DATABASE_URL || 'file:' + path.join(__dirname, 'jabon'),
+  authToken: process.env.TURSO_AUTH_TOKEN
+});
+const q = async (sql, args = [], c = db) => {
+  const r = await c.execute({ sql, args });
+  return r.rows.map(row => Object.fromEntries(r.columns.map((k, i) => [k, row[i]])));
+};
+const one = async (sql, args, c) => (await q(sql, args, c))[0];
+
+const ready = (async () => {
+  if (process.env.VERCEL && !process.env.TURSO_DATABASE_URL) throw new Error('Falta TURSO_DATABASE_URL (y TURSO_AUTH_TOKEN) en las variables de Vercel');
+  if (!(await one("SELECT 1 x FROM sqlite_master WHERE name='usuarios'"))) await db.executeMultiple(SCHEMA);
+  const ap = process.env.ADMIN_PASSWORD;
+  if (ap) {   // crea al admin o actualiza su contraseña con la del entorno
+    const a = await one("SELECT contrasena_hash h FROM usuarios WHERE nombre='admin'");
+    if (!a || !(await bcrypt.compare(ap, a.h)))
+      await q("INSERT INTO usuarios(nombre,correo,contrasena_hash,es_admin) VALUES('admin','admin@local',?,1) ON CONFLICT(nombre) DO UPDATE SET contrasena_hash=excluded.contrasena_hash, es_admin=1", [await bcrypt.hash(ap, 12)]);
+    console.log('Admin listo → usuario: admin');
+  } else if (!(await one('SELECT 1 x FROM usuarios WHERE es_admin=1'))) console.warn('⚠ No hay admin. Define ADMIN_PASSWORD');
+})();
+ready.catch(e => console.error('ERROR AL INICIAR:', e.message));
 
 const DUMMY = bcrypt.hashSync('dummy-password', 12);           // iguala tiempos si el usuario no existe
 const sha = t => crypto.createHash('sha256').update(t).digest('hex');
@@ -117,6 +130,7 @@ const ah = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(n
 
 const app = express();
 app.disable('x-powered-by');
+if (process.env.VERCEL) app.set('trust proxy', 1);              // para ver la IP real detrás del proxy de Vercel
 app.use(helmet({ contentSecurityPolicy: { directives: {
   defaultSrc: ["'self'"], scriptSrc: ["'self'"], styleSrc: ["'self'", 'https://fonts.googleapis.com'],
   fontSrc: ['https://fonts.gstatic.com'], imgSrc: ["'self'", 'data:'], connectSrc: ["'self'"],
@@ -128,23 +142,23 @@ const writeLimit = rateLimit({ windowMs: 60_000, limit: 20, message: { error: 'D
 
 // ---- sesiones (cookie httpOnly + token guardado hasheado + CSRF) ----
 const getCookie = (req, n) => ((req.headers.cookie || '').split(';').map(s => s.trim().split('=')).find(([k]) => k === n) || [])[1];
-app.use('/api', (req, _res, next) => {
-  req.s = null; const t = getCookie(req, 'sid');
+app.use('/api', ah(async (req, _res, next) => {
+  await ready; req.s = null; const t = getCookie(req, 'sid');
   if (t && /^[a-f0-9]{64}$/.test(t)) {
-    const r = db.prepare('SELECT s.csrf,s.expira AS expires,u.id,u.nombre AS name,u.correo AS email,u.es_admin AS is_admin FROM sesiones s JOIN usuarios u ON u.id=s.usuario_id WHERE s.token=?').get(sha(t));
+    const r = await one('SELECT s.csrf,s.expira AS expires,u.id,u.nombre AS name,u.correo AS email,u.es_admin AS is_admin FROM sesiones s JOIN usuarios u ON u.id=s.usuario_id WHERE s.token=?', [sha(t)]);
     if (r && r.expires > Date.now()) req.s = r;
   }
   next();
-});
+}));
 const need = (req, res, next) => req.s ? next() : res.status(401).json({ error: 'Inicia sesión' });
 const csrf = (req, res, next) => safeEq(req.get('x-csrf-token') || '', req.s.csrf) ? next() : res.status(403).json({ error: 'Token inválido' });
 const adminOnly = (req, res, next) => req.s.is_admin ? next() : res.status(403).json({ error: 'Solo administrador' });
 const pub = u => ({ name: u.name, email: u.email, is_admin: !!u.is_admin });
-function startSession(res, uid) {
+async function startSession(res, uid) {
   const t = crypto.randomBytes(32).toString('hex'), c = crypto.randomBytes(24).toString('hex');
-  db.prepare('DELETE FROM sesiones WHERE expira<?').run(Date.now());
-  db.prepare('DELETE FROM sesiones WHERE usuario_id=?').run(uid);          // una sola sesión por usuario
-  db.prepare('INSERT INTO sesiones VALUES(?,?,?,?)').run(sha(t), uid, c, Date.now() + TTL);
+  await q('DELETE FROM sesiones WHERE expira<?', [Date.now()]);
+  await q('DELETE FROM sesiones WHERE usuario_id=?', [uid]);          // una sola sesión por usuario
+  await q('INSERT INTO sesiones(token,usuario_id,csrf,expira) VALUES(?,?,?,?)', [sha(t), uid, c, Date.now() + TTL]);
   res.cookie('sid', t, { httpOnly: true, sameSite: 'strict', secure: PROD, path: '/' });   // sin maxAge: se borra al cerrar el navegador
   return c;
 }
@@ -162,75 +176,82 @@ const Checkout = z.object({
 });
 const Raffle = z.object({ name: z.string().trim().min(2).max(60), email: Email });
 const Review = z.object({ stars: z.number().int().min(1).max(5), comment: z.string().trim().min(1, 'Escribe un comentario').max(500) });
+const isDup = e => /UNIQUE|constraint/i.test(String(e && e.message));
 
 // ---- rutas ----
 app.post('/api/auth', authLimit, ah(async (req, res) => {
   const p = Auth.safeParse(req.body); if (!p.success) return bad(res, p);
   const { name, email, password } = p.data;
-  const u = db.prepare('SELECT id,nombre AS name,correo AS email,contrasena_hash AS password_hash,es_admin AS is_admin FROM usuarios WHERE nombre=?').get(name);
+  const u = await one('SELECT id,nombre AS name,correo AS email,contrasena_hash AS password_hash,es_admin AS is_admin FROM usuarios WHERE nombre=?', [name]);
   if (u) {
     if (!(await bcrypt.compare(password, u.password_hash))) return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
-    return res.json({ user: pub(u), csrf: startSession(res, u.id) });
+    return res.json({ user: pub(u), csrf: await startSession(res, u.id) });
   }
   if (name.toLowerCase() === 'admin') return res.status(403).json({ error: 'Ese nombre está reservado' });
   await bcrypt.compare(password, DUMMY);
   if (!/^(?=.*\p{L})(?=.*\d).{8,72}$/u.test(password)) return res.status(400).json({ error: 'Contraseña: 8+ caracteres con letras y números' });
   const hash = await bcrypt.hash(password, 12);
-  try {
-    const id = db.prepare('INSERT INTO usuarios(nombre,correo,contrasena_hash) VALUES(?,?,?)').run(name, email, hash).lastInsertRowid;
-    res.json({ user: { name, email, is_admin: false }, csrf: startSession(res, id) });
-  } catch { res.status(409).json({ error: 'Ese usuario ya existe' }); }
+  let id;
+  try { id = Number((await db.execute({ sql: 'INSERT INTO usuarios(nombre,correo,contrasena_hash) VALUES(?,?,?)', args: [name, email, hash] })).lastInsertRowid); }
+  catch (e) { if (isDup(e)) return res.status(409).json({ error: 'Ese usuario ya existe' }); throw e; }
+  res.json({ user: { name, email, is_admin: false }, csrf: await startSession(res, id) });
 }));
 app.get('/api/me', need, (req, res) => res.json({ user: pub(req.s), csrf: req.s.csrf }));
-app.post('/api/logout', need, csrf, (req, res) => {
-  db.prepare('DELETE FROM sesiones WHERE token=?').run(sha(getCookie(req, 'sid')));
+app.post('/api/logout', need, csrf, ah(async (req, res) => {
+  await q('DELETE FROM sesiones WHERE token=?', [sha(getCookie(req, 'sid'))]);
   res.clearCookie('sid'); res.json({ ok: true });
-});
-app.get('/api/products', need, (_req, res) => res.json(db.prepare('SELECT id,nombre AS name,descripcion AS description,precio AS price FROM productos WHERE activo=1').all()));
-app.post('/api/coupon', need, csrf, writeLimit, (req, res) => {
+}));
+app.get('/api/products', need, ah(async (_req, res) => res.json(await q('SELECT id,nombre AS name,descripcion AS description,precio AS price FROM productos WHERE activo=1'))));
+app.post('/api/coupon', need, csrf, writeLimit, ah(async (req, res) => {
   const code = String(req.body?.code || '').trim().slice(0, 30);
-  const c = db.prepare('SELECT codigo AS code,porcentaje AS percent_off FROM cupones WHERE codigo=? AND activo=1').get(code);
+  const c = await one('SELECT codigo AS code,porcentaje AS percent_off FROM cupones WHERE codigo=? AND activo=1', [code]);
   c ? res.json({ code: c.code, pct: c.percent_off }) : res.status(404).json({ error: 'Cupón no válido' });
-});
-app.post('/api/checkout', need, csrf, writeLimit, (req, res) => {
+}));
+app.post('/api/checkout', need, csrf, writeLimit, ah(async (req, res) => {
   const p = Checkout.safeParse(req.body); if (!p.success) return bad(res, p);
   const { items, coupon, status, card4 } = p.data;
   const merged = new Map(); items.forEach(i => merged.set(i.id, Math.min(20, (merged.get(i.id) || 0) + i.qty)));
-  const rows = [...merged].map(([id, qty]) => ({ prod: db.prepare('SELECT id,precio AS price FROM productos WHERE id=? AND activo=1').get(id), qty }));
-  if (rows.some(r => !r.prod)) return res.status(400).json({ error: 'Producto inválido' });
+  const ids = [...merged.keys()];
+  const prods = await q(`SELECT id,precio AS price FROM productos WHERE activo=1 AND id IN (${ids.map(() => '?').join(',')})`, ids);
+  if (prods.length !== ids.length) return res.status(400).json({ error: 'Producto inválido' });
+  const rows = prods.map(pr => ({ prod: pr, qty: merged.get(pr.id) }));
   const subtotal = rows.reduce((s, r) => s + r.prod.price * r.qty, 0);     // el precio SIEMPRE lo decide el servidor
-  let cp = null; if (coupon) { cp = db.prepare('SELECT codigo AS code,porcentaje AS percent_off FROM cupones WHERE codigo=? AND activo=1').get(coupon); if (!cp) return res.status(400).json({ error: 'Cupón no válido' }); }
+  let cp = null;
+  if (coupon) { cp = await one('SELECT codigo AS code,porcentaje AS percent_off FROM cupones WHERE codigo=? AND activo=1', [coupon]); if (!cp) return res.status(400).json({ error: 'Cupón no válido' }); }
   const discount = cp ? +(subtotal * cp.percent_off / 100).toFixed(2) : 0, total = +(subtotal - discount).toFixed(2);
-  const id = db.transaction(() => {
-    const oid = db.prepare('INSERT INTO pedidos(usuario_id,estado,subtotal,cupon_codigo,descuento,total,tarjeta_ultimos4) VALUES(?,?,?,?,?,?,?)')
-      .run(req.s.id, status, subtotal, cp?.code ?? null, discount, total, status === 'pagada' ? (card4 || '0000') : null).lastInsertRowid;
-    const ins = db.prepare('INSERT INTO pedido_detalle(pedido_id,producto_id,cantidad,precio_unitario) VALUES(?,?,?,?)');
-    rows.forEach(r => ins.run(oid, r.prod.id, r.qty, r.prod.price)); return oid;
-  })();
+  const tx = await db.transaction('write');
+  let id;
+  try {
+    const r = await tx.execute({ sql: 'INSERT INTO pedidos(usuario_id,estado,subtotal,cupon_codigo,descuento,total,tarjeta_ultimos4) VALUES(?,?,?,?,?,?,?)',
+      args: [req.s.id, status, subtotal, cp ? cp.code : null, discount, total, status === 'pagada' ? (card4 || '0000') : null] });
+    id = Number(r.lastInsertRowid);
+    for (const x of rows) await tx.execute({ sql: 'INSERT INTO pedido_detalle(pedido_id,producto_id,cantidad,precio_unitario) VALUES(?,?,?,?)', args: [id, x.prod.id, x.qty, x.prod.price] });
+    await tx.commit();
+  } catch (e) { await tx.rollback().catch(() => {}); throw e; } finally { tx.close(); }
   res.json({ order: { id, status, total } });
-});
-app.post('/api/raffle', need, csrf, writeLimit, (req, res) => {
+}));
+app.post('/api/raffle', need, csrf, writeLimit, ah(async (req, res) => {
   const p = Raffle.safeParse(req.body); if (!p.success) return bad(res, p);
-  try { db.prepare('INSERT INTO participantes_rifa(usuario_id,nombre,correo) VALUES(?,?,?)').run(req.s.id, p.data.name, p.data.email); res.json({ ok: true }); }
-  catch { res.status(409).json({ error: 'Ese correo ya está registrado en la rifa.' }); }
-});
-app.get('/api/reviews', need, (_req, res) => res.json(db.prepare('SELECT u.nombre AS name,r.estrellas AS stars,r.comentario AS comment,r.creado_en AS created_at FROM resenas r JOIN usuarios u ON u.id=r.usuario_id ORDER BY r.id DESC LIMIT 100').all()));
-app.post('/api/reviews', need, csrf, writeLimit, (req, res) => {
+  try { await q('INSERT INTO participantes_rifa(usuario_id,nombre,correo) VALUES(?,?,?)', [req.s.id, p.data.name, p.data.email]); res.json({ ok: true }); }
+  catch (e) { if (isDup(e)) return res.status(409).json({ error: 'Ese correo ya está registrado en la rifa.' }); throw e; }
+}));
+app.get('/api/reviews', need, ah(async (_req, res) => res.json(await q('SELECT u.nombre AS name,r.estrellas AS stars,r.comentario AS comment,r.creado_en AS created_at FROM resenas r JOIN usuarios u ON u.id=r.usuario_id ORDER BY r.id DESC LIMIT 100'))));
+app.post('/api/reviews', need, csrf, writeLimit, ah(async (req, res) => {
   const p = Review.safeParse(req.body); if (!p.success) return bad(res, p);
-  db.prepare('INSERT INTO resenas(usuario_id,estrellas,comentario) VALUES(?,?,?)').run(req.s.id, p.data.stars, p.data.comment); res.json({ ok: true });
-});
-const orders = st => db.prepare(`SELECT o.id,u.nombre AS name,o.total,o.cupon_codigo AS coupon_code,o.tarjeta_ultimos4 AS card_last4,o.creado_en AS created_at,
+  await q('INSERT INTO resenas(usuario_id,estrellas,comentario) VALUES(?,?,?)', [req.s.id, p.data.stars, p.data.comment]); res.json({ ok: true });
+}));
+const orders = st => q(`SELECT o.id,u.nombre AS name,o.total,o.cupon_codigo AS coupon_code,o.tarjeta_ultimos4 AS card_last4,o.creado_en AS created_at,
   (SELECT group_concat(p.nombre||' x'||i.cantidad,', ') FROM pedido_detalle i JOIN productos p ON p.id=i.producto_id WHERE i.pedido_id=o.id) productos
-  FROM pedidos o JOIN usuarios u ON u.id=o.usuario_id WHERE o.estado=? ORDER BY o.id DESC`).all(st);
+  FROM pedidos o JOIN usuarios u ON u.id=o.usuario_id WHERE o.estado=? ORDER BY o.id DESC`, [st]);
 const ADMIN_Q = {
-  users: () => db.prepare('SELECT nombre AS name,correo AS email,creado_en AS created_at FROM usuarios ORDER BY id').all(),
-  raffle: () => db.prepare('SELECT nombre AS name,correo AS email,creado_en AS created_at FROM participantes_rifa ORDER BY id').all(),
-  reviews: () => db.prepare('SELECT u.nombre AS name,r.estrellas AS stars,r.comentario AS comment,r.creado_en AS created_at FROM resenas r JOIN usuarios u ON u.id=r.usuario_id ORDER BY r.id DESC').all(),
+  users: () => q('SELECT nombre AS name,correo AS email,creado_en AS created_at FROM usuarios ORDER BY id'),
+  raffle: () => q('SELECT nombre AS name,correo AS email,creado_en AS created_at FROM participantes_rifa ORDER BY id'),
+  reviews: () => q('SELECT u.nombre AS name,r.estrellas AS stars,r.comentario AS comment,r.creado_en AS created_at FROM resenas r JOIN usuarios u ON u.id=r.usuario_id ORDER BY r.id DESC'),
   paid: () => orders('pagada'), pending: () => orders('pendiente')
 };
-app.get('/api/admin/:k', need, adminOnly, (req, res) => Object.hasOwn(ADMIN_Q, req.params.k) ? res.json(ADMIN_Q[req.params.k]()) : res.status(404).json({ error: 'No existe' }));
+app.get('/api/admin/:k', need, adminOnly, ah(async (req, res) => Object.hasOwn(ADMIN_Q, req.params.k) ? res.json(await ADMIN_Q[req.params.k]()) : res.status(404).json({ error: 'No existe' })));
 
-app.use(express.static(path.join(__dirname, 'public')));          // solo /public; el .db y el código quedan fuera
+app.use(express.static(path.join(__dirname, 'public')));          // solo /public; la base y el código quedan fuera
 app.use('/api', (_req, res) => res.status(404).json({ error: 'No encontrado' }));
 app.use((err, _req, res, _next) => { console.error(err); res.status(err.status === 400 ? 400 : 500).json({ error: 'Error del servidor' }); });
 if (require.main === module) app.listen(process.env.PORT || 3000, process.env.HOST || '127.0.0.1', () => console.log('http://' + (process.env.HOST || '127.0.0.1') + ':' + (process.env.PORT || 3000)));
